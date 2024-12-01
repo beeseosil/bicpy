@@ -1,6 +1,5 @@
-*.ipynb
-*.png
 *.txt
+*.ipynb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

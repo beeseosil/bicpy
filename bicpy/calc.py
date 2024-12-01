@@ -15,23 +15,27 @@ from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import SimpleImputer, KNNImputer, IterativeImputer
 
 from cuml.ensemble import RandomForestRegressor
-from dask_ml.decomposition import IncrementalPCA
+from dask_ml.decomposition import IncrementalPCA as dask_pca
+from cuml.decomposition import IncrementalPCA as cuml_pca
 from cuml.metrics.trustworthiness import trustworthiness
 from cuml import TSNE
 
 from dask_ml.cluster import SpectralClustering
 
-seed=23301522
-state=np.random.RandomState(seed)
 
-palette_discrete=sns.color_palette("Set1", desat=.8)
-palette_discrete_many=palette_discrete
+state_seed=23301522
+state=np.random.RandomState(state_seed)
+
+
+palette_discrete=lambda q:sns.color_palette("Set2", n_colors=q, desat=.9)
 palette_contiguous=sns.color_palette("icefire", as_cmap=True)
+
 
 def get_na_prop_df(x):
   if isinstance(x,pd.DataFrame):
     return x.apply(pd.isna).apply(pd.Series.value_counts,normalize=True)
   raise TypeError(f"{type(x)=}")
+
 
 def interact_feature(darr,n=2)->tuple:
     if darr.ndim==2:
@@ -40,6 +44,7 @@ def interact_feature(darr,n=2)->tuple:
       
       return poly,Xp
     raise ValueError(f"{darr.ndim=}")
+
 
 def evaluate_imputation(x,y):
   splitter=ShuffleSplit(n_splits=10**1,random_state=state)
@@ -63,28 +68,40 @@ def evaluate_imputation(x,y):
 
   return result
 
-def pca(darr,n=2,batch_size=300)->tuple:
-    decomposer=IncrementalPCA(n_components=n,batch_size=batch_size,random_state=state)
-    return decomposer,decomposer.fit_transform(darr)
+
+def pca(darr,backend="dask",n=2,batch_size=64 * 30,iterated_power=3,output_type=None)->tuple:
+  if backend=="dask":
+    decomposer=cuml_pca(
+      n_components=n,
+      batch_size=batch_size,
+      iterated_power=iterated_power,
+      random_state=state
+    )
+  elif backend=="cupy":
+    decomposer=cuml_pca(
+      n_components=n,
+      batch_size=64 * 4,
+      output_type=output_type
+    )
+  return decomposer,decomposer.fit_transform(darr)
+
 
 def get_svd(darr,n=10)->tuple:
     return tuple(q.compute() for q in da.linalg.svd_compressed(darr,k=n))
 
-def cluster_nx(
+
+def cluster_nx_iter(
     darr,
-    cluster_count_range=range(2,101,2),
+    cluster_count_range=range(2,11,1),
     component_count=100,
     affinity="polynomial",
-    degree=3,
+    scoring=False,
     random_state=state
 )->tuple:
   X=darr
 
   result={}
-  score_historical=0
   for cluster_count in cluster_count_range:
-    component_count=100
-
     claim(f"Attempting to cluster {X.shape}, {X.dtype}, {X.nbytes // 1024**2}MB for",f"{cluster_count=}, {component_count=}")
     t0=time()
     
@@ -92,83 +109,126 @@ def cluster_nx(
       n_clusters=cluster_count,
       n_components=component_count,
       affinity=affinity,
-      degree=degree,
+      degree=3,
+      coef0=1,
       assign_labels="kmeans",
       persist_embedding=True,
-      random_state=random_state
+      random_state=random_state,
+      n_jobs=-1
     )
 
     clusterer.fit(X)
     claim(f"Clustring took {(time() - t0) // 1} s")
 
-    t0=time()
-    Xl=clusterer.labels_
-    score=trustworthiness(X,Xl,batch_size=384)
+    if scoring:
+      t0=time()
+      score_historical=0
+      Xl=clusterer.labels_
+      score=trustworthiness(X,Xl,batch_size=384)
 
-    if score>score_historical:
-      score_historical=score
-      clusterer_return=clusterer
+      if score>score_historical:
+        score_historical=score
+        clusterer_return=clusterer
+      else:
+        clusterer_return=None
+
+      result_intermidiate=(score,clusterer_return)
+      claim(f"Scoring took {(time() - t0) // 1} s")
     else:
-      clusterer_return=None
-
-    result[cluster_count]=(score,clusterer_return)
-    claim(f"Scoring took {(time() - t0) // 1} s")
-
-  fig,ax=plt.subplots(figsize=(8,8))
-
-  ax.plot(cluster_count_range,[q[0] for q in result.values()])
-  ax.set_xlabel("n")
-  ax.set_ylabel("Score")
-  ax.set_title(f"Score, {cluster_count_range=}")
-  plt.savefig(f"./cluster_nx_trustworthiness-{str(time().replace(".",""))[:10]}.png",transparent=True)
-
-  return result,fig,ax
-
-def clustering_t(
-	darr,
-	label_groundtruth,
-	param_distributions=dict(
-		perplexity=range(5,201,10),
-		learning_rate=range(1,201,10),
-		n_neighbors=range(30,601,15),
-		n_iter=[10**q for q in range(1,5)],
-		metric=["l1", "cityblock", "manhattan", "euclidean", "l2", "cosine", "correlation"],
-	),
-	n=10**3,
-	random_state=state
-):
-	X=darr
+      result_intermidiate=(1,clusterer)
     
-	param_distribution=ParameterSampler(param_distributions,n,random_state=random_state)
+    result[cluster_count]=result_intermidiate
+
+  if scoring:
+    fig,ax=plt.subplots(figsize=(6,6))
+
+    ax.plot(cluster_count_range,[q[0] for q in result.values()])
+    ax.set_xlabel("n")
+    ax.set_ylabel("Score")
+    ax.set_title(f"Score, {cluster_count_range=}")
+
+    plt.savefig(
+      f"./result/{str(time()).replace('.','')[:10]}-cluster_nx_iter.png",
+      transparent=True
+    )
+
+    return result,fig,ax
   
-	result_total=[]
-	for param in param_distribution:
-		print(f"TSNE: Fitting for ({param=})")
-		decomposer=TSNE(random_state=random_state,**param)
-		result=decomposer.fit_transform(X)
-		result_total.append((param,result))
-    
-	return result_total
+  return result
 
-def cluster_plot(darr,obs_label):
-  Xr=darr.compute()
 
+def cluster_t_iter(
+	X,
+	label,
+  param=dict(
+    perplexity=[q for q in range(50, 1001, 50)],
+    n_neighbors=[10 ** q for q in range(4,10)],
+    n_iter=[10 ** q for q in range(2,5)],
+    learning_rate=np.logspace(1.5,3,5)
+  ),
+  param_sample_size=3,
+  random_state_seed=state_seed
+):
+  param_list=ParameterSampler(
+    param,
+    n_iter=param_sample_size,
+  )
+
+  result_total=[]
+  for _param in param_list:
+    claim(f"Fitting for ({_param=})")
+    decomposer=TSNE(
+      **_param,
+      exaggeration_iter=int(np.sqrt(_param["n_iter"])),
+      random_state=random_state_seed
+    )
+
+    result=decomposer.fit_transform(X)
+
+    result_total.append((_param,result))
+
+    cluster_plot(result,label,title=f"\n{_param}",name="cluster_t_iter",figsize=(4,4))
+
+    result=None
+
+  return result_total
+
+
+def cluster_plot(
+  Xr,
+  label,
+  name="cluster",
+  figsize=(8,8),
+  return_figure=True
+):
   if Xr.ndim==2:
-    Xl=da.unique(obs_label).compute()
-    fig,ax=plt.subplots(figsize=(8,8))
+    Xl=da.unique(label).compute()
+    fig,ax=plt.subplots(figsize=figsize)
 
-    for color,label in zip(palette_discrete_many(Xl.size),Xl):
+    for color,l in zip(palette_discrete(Xl.size),Xl):
       plt.scatter(
-        Xr[obs_label==label, 0],
-        Xr[obs_label==label, 1],
+        Xr[label==l, 0],
+        Xr[label==l, 1],
         color=color,
-        label=str(label),
-        alpha=.7
+        label=str(l),
+        alpha=.3
       )
 
-    ax.set_xlabel("Xr: x0")
-    ax.set_ylabel("Xr: x1")
-    ax.set_title(f"Clusters by ({Xl.size}) length of Xl")
-    plt.savefig(f"./clusters-{str(time().replace(".",""))[:10]}.png",transparent=True)
+    ax.set_xlabel("Xr: X0")
+    ax.set_ylabel("Xr: X1")
 
-    return fig,ax
+    plt.xticks([])
+    plt.yticks([])
+    ax.set_title("")
+
+    plt.savefig(
+      f"./result/{str(time()).replace('.','')[:13]}-{name}.png",
+      transparent=True
+    )
+
+    if return_figure:
+      return fig,ax
+    else:
+      plt.clf()
+      return None
+
