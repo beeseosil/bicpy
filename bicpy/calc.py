@@ -69,9 +69,16 @@ def evaluate_imputation(x,y):
   return result
 
 
-def pca(darr,backend="dask",n=2,batch_size=64 * 30,iterated_power=3,output_type=None)->tuple:
+def pca(
+  darr,
+  backend="dask",
+  n=2,
+  batch_size=64 * 30,
+  iterated_power=3,
+  output_type=None
+)->tuple:
   if backend=="dask":
-    decomposer=cuml_pca(
+    decomposer=dask_pca(
       n_components=n,
       batch_size=batch_size,
       iterated_power=iterated_power,
@@ -80,7 +87,7 @@ def pca(darr,backend="dask",n=2,batch_size=64 * 30,iterated_power=3,output_type=
   elif backend=="cupy":
     decomposer=cuml_pca(
       n_components=n,
-      batch_size=64 * 4,
+      batch_size=batch_size / 8,
       output_type=output_type
     )
   return decomposer,decomposer.fit_transform(darr)
@@ -102,7 +109,11 @@ def cluster_nx_iter(
 
   result={}
   for cluster_count in cluster_count_range:
-    claim(f"Attempting to cluster {X.shape}, {X.dtype}, {X.nbytes // 1024**2}MB for",f"{cluster_count=}, {component_count=}")
+    claim(
+	    f"Attempting to cluster {X.shape}, {X.dtype}, {X.nbytes // 1024**2}MB for",
+	    f"{cluster_count=}, {component_count=}"
+    )
+		
     t0=time()
     
     clusterer=SpectralClustering(
