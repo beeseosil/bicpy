@@ -3,6 +3,11 @@ import numpy as np
 import cupy as cp
 import dask.array as da
 import zarr
+import rmm
+
+from rmm.allocators.cupy import rmm_cupy_allocator
+from dask_cuda import LocalCUDACluster
+from dask.distributed import Client, wait
 
 from shutil import make_archive
 from time import time
@@ -16,6 +21,22 @@ def free_vram(memory_pool):
   for pool in memory_pool:
     pool.free_all_blocks()
   return 
+
+
+def init_rmm_client(n_thread=4)->Client:
+  cluster=LocalCUDACluster(
+    threads_per_worker=n_thread,
+    rmm_log_directory=f'/tmp/rmm-log-{str(time())[:-8]}',
+    rmm_managed_memory=True
+  )
+
+  client=Client(cluster)
+
+  client.run(cp.cuda.set_allocator,rmm_cupy_allocator)
+  rmm.reinitialize(managed_memory=True)
+  cp.cuda.set_allocator(rmm_cupy_allocator)
+
+  return client
 
 
 def claim(about,what=""):
