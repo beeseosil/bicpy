@@ -39,7 +39,7 @@ def lap(func,**kwargs):
 
 def get_rmm_client(n_thread=4,port=15220):
   cluster=LocalCUDACluster(
-    f'tcp://0.0.0.0:{port}',
+    scheduler_port=port,
     threads_per_worker=n_thread,
     local_directory=f'/tmp/rmm-temp-{str(time())[:-8]}',
     rmm_log_directory=f'/tmp/rmm-log-{str(time())[:-8]}',
