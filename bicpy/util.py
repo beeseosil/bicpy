@@ -7,7 +7,7 @@ import rmm
 
 from rmm.allocators.cupy import rmm_cupy_allocator
 from dask_cuda import LocalCUDACluster
-from dask.distributed import Client, wait
+from dask.distributed import Client
 
 from shutil import make_archive
 from time import time
@@ -21,22 +21,6 @@ def free_vram(memory_pool):
   for pool in memory_pool:
     pool.free_all_blocks()
   return 
-
-
-def init_rmm_client(n_thread=4)->Client:
-  cluster=LocalCUDACluster(
-    threads_per_worker=n_thread,
-    rmm_log_directory=f'/tmp/rmm-log-{str(time())[:-8]}',
-    rmm_managed_memory=True
-  )
-
-  client=Client(cluster)
-
-  client.run(cp.cuda.set_allocator,rmm_cupy_allocator)
-  rmm.reinitialize(managed_memory=True)
-  cp.cuda.set_allocator(rmm_cupy_allocator)
-
-  return client
 
 
 def claim(about,what=""):
@@ -53,17 +37,45 @@ def lap(func,**kwargs):
   return result
 
 
+def get_rmm_client(n_thread=4,port=15220):
+  cluster=LocalCUDACluster(
+    f'tcp://0.0.0.0:{port}',
+    threads_per_worker=n_thread,
+    local_directory=f'/tmp/rmm-temp-{str(time())[:-8]}',
+    rmm_log_directory=f'/tmp/rmm-log-{str(time())[:-8]}',
+    rmm_managed_memory=True
+  )
+
+  client=Client(cluster)
+
+  client.run(cp.cuda.set_allocator,rmm_cupy_allocator)
+  rmm.reinitialize(managed_memory=True)
+  cp.cuda.set_allocator(rmm_cupy_allocator)
+
+  return client
+
+
 def is_sound(data:tuple)->bool:
   result=True if len(data_order)==len(data) else False
   return result
 
 
-def to_da(data,blocksize="auto",thin=False)->da.Array:
-  darr=da.from_array(data,chunks=blocksize)
-  if thin:
-    if darr.shape[0]>darr.shape[1] and darr.ndim==2:
-      return da.rechunk(darr,chunks={1:darr.shape[1]})
-    raise ValueError(f"{darr.shape[0] < darr.shape[1]}")
+def to_da(data, blocksize='auto',thin=False)->da.Array:
+  if isinstance(data, da.core.Array) and thin:
+    darr = da.rechunk(
+      data,
+      chunks = {axis: data.shape[axis]}
+    )
+  else:
+    if thin:
+      if data.ndim == 2:
+        axis = np.argmax(data.shape)
+        darr = da.rechunk(
+          da.from_array(data, chunks = blocksize),
+          chunks = {axis: data.shape[axis]}
+        )
+    else:
+      darr = da.from_array(data, chunks = blocksize)
   return darr
 
 
@@ -96,20 +108,17 @@ def write_init(root_path,data_name,data):
 
 
 def write_array(group,*args):
-	if len(args[-1])==2:
-		result=[]
-		for name,data in args:
-			group.create_dataset(name=name,data=data)
-			result.append((name,data.shape))
-			print(f"Created {name=} of {data.shape}, {data.dtype}")
-		return result
+  if len(args[-1])==2:
+    result=[]
+    for name,data in args:
+      if isinstance(data,da.core.Array):
+        raise TypeError(f'Only computed result is supported, got {type(data)}')
+      
+      group.create_dataset(name=name,data=data)
+      result.append((name,data.shape))
 
-
-def write_array_result(group,*args):
-    if len(args[-1])==2:
-      group.create_group("result")
-      write_array(group["result"],args)
-    return 
+      claim(f"Created {name=} of {data.shape}, {data.dtype}")
+    return result
 
 
 def to_tar(root_path,archive_name):

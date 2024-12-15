@@ -15,6 +15,7 @@ from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import SimpleImputer, KNNImputer, IterativeImputer
 
 from cuml.ensemble import RandomForestRegressor
+from cuml import TruncatedSVD as cuml_compressed_svd
 from dask_ml.decomposition import IncrementalPCA as dask_pca
 from cuml.decomposition import IncrementalPCA as cuml_pca
 from cuml.metrics.trustworthiness import trustworthiness
@@ -25,7 +26,6 @@ from dask_ml.cluster import SpectralClustering
 
 state_seed=23301522
 state=np.random.RandomState(state_seed)
-
 
 palette_discrete=lambda q:sns.color_palette("Set2", n_colors=q, desat=.9)
 palette_contiguous=sns.color_palette("icefire", as_cmap=True)
@@ -71,30 +71,42 @@ def evaluate_imputation(x,y):
 
 def pca(
   darr,
-  backend="dask",
+  backend='dask',
   n=2,
-  batch_size=64 * 30,
+  batch_size=1024,
   iterated_power=3,
-  output_type=None
+  frontend=None
 )->tuple:
-  if backend=="dask":
+  if backend=='dask':
     decomposer=dask_pca(
       n_components=n,
       batch_size=batch_size,
       iterated_power=iterated_power,
       random_state=state
     )
-  elif backend=="cupy":
+  else:
     decomposer=cuml_pca(
       n_components=n,
-      batch_size=batch_size / 8,
-      output_type=output_type
+      batch_size=int(batch_size / 8),
+      output_type=frontend
     )
   return decomposer,decomposer.fit_transform(darr)
 
 
-def get_svd(darr,n=10)->tuple:
-    return tuple(q.compute() for q in da.linalg.svd_compressed(darr,k=n))
+def get_svd(darr,n=10,backend='cupy')->tuple:
+  if backend=='dask':
+    return da.linalg.svd_compressed(
+      darr,
+      k=n,
+      compute=True
+    )
+  else:
+    return cuml_compressed_svd(
+      darr,
+      algorithm = 'Jacobi',
+      n_components = n,
+      n_iter = 20
+    )
 
 
 def cluster_nx_iter(
@@ -198,7 +210,15 @@ def cluster_t_iter(
 
     result_total.append((_param,result))
 
-    cluster_plot(result,label,title=f"\n{_param}",name="cluster_t_iter",figsize=(4,4))
+    if isinstance(result, cp.ndarray):
+      result=result.get()
+
+    cluster_plot(
+      result,
+      label,
+      name="cluster_t_iter",
+      figsize=(6,6)
+    )
 
     result=None
 
@@ -222,7 +242,7 @@ def cluster_plot(
         Xr[label==l, 1],
         color=color,
         label=str(l),
-        alpha=.3
+        alpha=.8
       )
 
     ax.set_xlabel("Xr: X0")
