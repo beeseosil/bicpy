@@ -96,7 +96,7 @@ def parse_data(obj:dict,dry_run=True)->tuple:
 
 def init_zarr(root_path,data_name):
   storage=zarr.storage.DirectoryStore(os.path.join(root_path,data_name))
-  return zarr.open(storage,mode="r+")
+  return zarr.open(store=storage,mode="r+")
 
 
 def write_init(root_path,data_name,data):
