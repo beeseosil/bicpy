@@ -4,7 +4,6 @@ import cupy as cp
 import dask.array as da
 import zarr
 import rmm
-import zstandard as zstd
 
 from rmm.allocators.cupy import rmm_cupy_allocator
 from dask_cuda import LocalCUDACluster
@@ -61,22 +60,27 @@ def is_sound(data:tuple)->bool:
   return result
 
 
-def to_da(data, blocksize='auto',thin=False)->da.Array:
+def to_da(data, blocksize='auto', thin=False)->da.Array:
+  axis = np.argmax(data.shape)
   if isinstance(data, da.core.Array) and thin:
     darr = da.rechunk(
       data,
       chunks = {axis: data.shape[axis]}
     )
   else:
-    if thin:
-      if data.ndim == 2:
-        axis = np.argmax(data.shape)
-        darr = da.rechunk(
-          da.from_array(data, chunks = blocksize),
-          chunks = {axis: data.shape[axis]}
-        )
+    if thin and data.ndim == 2:
+      darr = da.rechunk(
+        da.from_array(data, chunks = blocksize),
+        chunks = {axis: data.shape[axis]}
+      )
     else:
-      darr = da.from_array(data, chunks = blocksize)
+      if data.ndim == 2:
+        darr = da.from_array(
+          data,
+          chunks = blocksize
+        )
+      else:
+        raise NotImplemented(f'{data.ndim=}')
   return darr
 
 
@@ -90,25 +94,29 @@ def parse_data(obj:dict,dry_run=True)->tuple:
     arr=np.asarray([*obj["data"]["arr"][:50],*obj["data"]["arr"][-50:]])
   else:
     arr=np.asarray(obj["data"]["arr"])
-  ind=np.asarray(obj["data"]["ind"],dtype="U32") if "ind" in obj["data"] and obj["data"]["ind"] else np.arange(arr.shape[0])
-  col=np.asarray(obj["data"]["col"],dtype="U32") if "col" in obj["data"] and obj["data"]["col"] else np.arange(arr.shape[1])
+  ind=np.asarray(obj["data"]["ind"],dtype="U32") if \
+    "ind" in obj["data"] and obj["data"]["ind"] else np.arange(arr.shape[0])
+  col=np.asarray(obj["data"]["col"],dtype="U32") if \
+    "col" in obj["data"] and obj["data"]["col"] else np.arange(arr.shape[1])
   return arr,ind,col
 
 
-def init_zarr(root_path,data_name):
+def init_zarr(root_path,data_name)->zarr.Group:
   storage=zarr.storage.DirectoryStore(os.path.join(root_path,data_name))
   return zarr.open(store=storage,mode="r+")
 
 
-def write_init(root_path,data_name,data):
+def write_init(root_path,data_name,data)->zarr.Group:
   group=init_zarr(root_path,data_name)
-  for dataset in zip(data_order,data):
-    group.create_dataset(name=dataset[0],data=dataset[1].compute())
-  print(group.info)
-  return group
+  if len(data)==len(data_order):
+    for dataset in zip(data_order,data):
+      group.create_dataset(name=dataset[0],data=dataset[1].compute())
+    print(group.info)
+    return group
+  raise ValueError(f'Data seems to unlikely have elements of {data_order}')
 
 
-def write_array(group,*args):
+def write_array(group:zarr.Group,*args)->list:
   if len(args[-1])==2:
     result=[]
     for name,data in args:
@@ -122,10 +130,8 @@ def write_array(group,*args):
     return result
 
 
-def to_tar(root_path,archive_name,z=True):
+def to_tar(root_path,archive_name)->str:
   base_name=os.path.join(root_path,archive_name)
   full_path=root_path + make_archive(base_name,"tar",root_path,archive_name)
-  if z:
-      with open(full_path, 'rb') as outfile:
-          compressor=zstd.ZstdCompressor()
-  
+  return full_path
+
