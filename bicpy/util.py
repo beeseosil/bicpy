@@ -4,6 +4,7 @@ import cupy as cp
 import dask.array as da
 import zarr
 import rmm
+import zstandard as zstd
 
 from rmm.allocators.cupy import rmm_cupy_allocator
 from dask_cuda import LocalCUDACluster
@@ -121,6 +122,10 @@ def write_array(group,*args):
     return result
 
 
-def to_tar(root_path,archive_name):
+def to_tar(root_path,archive_name,z=True):
   base_name=os.path.join(root_path,archive_name)
-  return root_path + make_archive(base_name,"tar",root_path,archive_name)
+  full_path=root_path + make_archive(base_name,"tar",root_path,archive_name)
+  if z:
+      with open(full_path, 'rb') as outfile:
+          compressor=zstd.ZstdCompressor()
+  
