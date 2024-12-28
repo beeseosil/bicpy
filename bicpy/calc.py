@@ -4,13 +4,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from .util import *
+from util import *
 
 from time import time
 
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import ParameterSampler, ShuffleSplit, cross_val_score
-from sklearn.preprocessing import PowerTransformer, PolynomialFeatures
+from sklearn.preprocessing import PowerTransformer
+from dask_ml.preprocessing import PolynomialFeatures as dask_PolynomialFeatures
+from cuml.preprocessing import PolynomialFeatures as cuml_PolynomialFeatures
 from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import SimpleImputer, KNNImputer, IterativeImputer
 
@@ -37,12 +39,14 @@ def get_na_prop_df(x):
   raise TypeError(f"{type(x)=}")
 
 
-def interact_feature(darr,n=2)->tuple:
+def interact_feature(darr,n=2,backend='cupy')->tuple:
     if darr.ndim==2:
-      poly=PolynomialFeatures(degree=n,interaction_only=True)
+      if backend=='dask':
+        interacter=dask_PolynomialFeatures(degree=n)
+      elif backend=='cupy':
+        interacter=cuml_PolynomialFeatures(degree=n)
       Xp=poly.fit_transform(darr)
-      
-      return poly,Xp
+      return interacter,Xp
     raise ValueError(f"{darr.ndim=}")
 
 
