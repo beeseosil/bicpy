@@ -74,13 +74,10 @@ def to_da(data, blocksize='auto', thin=False)->da.Array:
         chunks = {axis: data.shape[axis]}
       )
     else:
-      if data.ndim == 2:
         darr = da.from_array(
           data,
           chunks = blocksize
         )
-      else:
-        raise NotImplemented(f'{data.ndim=}')
   return darr
 
 
