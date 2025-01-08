@@ -60,9 +60,13 @@ def is_sound(data:tuple)->bool:
   return result
 
 
-def to_da(data, blocksize='auto', thin=False)->da.Array:
+def is_darr(arr)->bool:
+  return True if isinstance(arr, da.core.Array) else False
+
+
+def to_darr(data, blocksize='auto', thin=False)->da.core.Array:
   axis = np.argmax(data.shape)
-  if isinstance(data, da.core.Array) and thin:
+  if is_darr(data) and thin:
     darr = da.rechunk(
       data,
       chunks = {axis: data.shape[axis]}
@@ -81,7 +85,7 @@ def to_da(data, blocksize='auto', thin=False)->da.Array:
   return darr
 
 
-def to_da_all(data:tuple)->tuple:
+def to_darr_all(data:tuple)->tuple:
   if is_sound(data):
     return to_da(data[0],"32MB",thin=True),to_da(data[1]),to_da(data[2])
 

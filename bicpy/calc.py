@@ -101,8 +101,8 @@ def get_svd(darr,n=10,backend='cupy')->tuple:
   if backend=='dask':
     return da.linalg.svd_compressed(
       darr,
-      k=n,
-      compute=True
+      k = n,
+      compute = True
     )
   else:
     return cuml_compressed_svd(
@@ -190,7 +190,7 @@ def cluster_t_iter(
   param=dict(
     perplexity=[q for q in range(50, 1001, 50)],
     n_neighbors=[10 ** q for q in range(4,10)],
-    n_iter=[10 ** q for q in range(2,5)],
+    n_iter=[10 ** q for q in range(2,8)],
     learning_rate=np.logspace(1.5,3,5)
   ),
   param_sample_size=3,
