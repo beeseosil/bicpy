@@ -64,6 +64,10 @@ def is_darr(arr)->bool:
   return True if isinstance(arr, da.core.Array) else False
 
 
+def count_na(df:pd.DataFrame)->pd.Series:
+  return df.isna().sum()
+
+
 def to_darr(data, blocksize='auto', thin=False)->da.core.Array:
   axis = np.argmax(data.shape)
   if is_darr(data) and thin:

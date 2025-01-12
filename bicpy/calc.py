@@ -33,12 +33,6 @@ palette_discrete=lambda q:sns.color_palette("Set2", n_colors=q, desat=.9)
 palette_contiguous=sns.color_palette("icefire", as_cmap=True)
 
 
-def get_na_prop_df(x):
-  if isinstance(x,pd.DataFrame):
-    return x.apply(pd.isna).apply(pd.Series.value_counts,normalize=True)
-  raise TypeError(f"{type(x)=}")
-
-
 def interact_feature(darr,n=2,backend='cupy')->tuple:
     if darr.ndim==2:
       if backend=='dask':
