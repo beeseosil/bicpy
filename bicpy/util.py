@@ -91,7 +91,7 @@ def to_darr(data, blocksize='auto', thin=False)->da.core.Array:
 
 def to_darr_all(data:tuple)->tuple:
   if is_sound(data):
-    return to_da(data[0],"32MB",thin=True),to_da(data[1]),to_da(data[2])
+    return to_darr(data[0],"32MB",thin=True),to_da(data[1]),to_da(data[2])
 
 
 def parse_data(obj:dict,dry_run=True)->tuple:
