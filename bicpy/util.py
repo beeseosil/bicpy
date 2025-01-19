@@ -2,6 +2,7 @@ import os
 import numpy as np
 import cupy as cp
 import dask.array as da
+import pandas as pd
 import zarr
 import rmm
 
@@ -13,18 +14,11 @@ from shutil import make_archive
 from time import time
 
 
-memory_pool=(cp.get_default_memory_pool(),cp.get_default_pinned_memory_pool())
 data_order=("arr","ind","col")
 
 
-def free_vram(memory_pool):
-  for pool in memory_pool:
-    pool.free_all_blocks()
-  return 
-
-
 def claim(about,what=""):
-  padder="ㅡ"*5
+  padder="ㅡ"*3
   print(padder,about,what)
   return 
 
@@ -35,6 +29,13 @@ def lap(func,**kwargs):
   lapsed=(time()-t0) // 1
   claim(f"{func.__repr__()} Took",f"{lapsed} s")
   return result
+
+
+def free_vram():
+  memory_pool=(cp.get_default_memory_pool(),cp.get_default_pinned_memory_pool())
+  for pool in memory_pool:
+    pool.free_all_blocks()
+  return 
 
 
 def get_rmm_client(n_thread=4,port=15220):
@@ -68,13 +69,20 @@ def count_na(df:pd.DataFrame)->pd.Series:
   return df.isna().sum()
 
 
-def to_darr(data, blocksize='auto', thin=False)->da.core.Array:
-  axis = np.argmax(data.shape)
+def to_darr(
+  data, 
+  blocksize='auto', 
+  thin=False
+)->da.core.Array:
+
+  axis = 1
+
   if is_darr(data) and thin:
     darr = da.rechunk(
       data,
       chunks = {axis: data.shape[axis]}
     )
+  
   else:
     if thin and data.ndim == 2:
       darr = da.rechunk(
@@ -86,6 +94,7 @@ def to_darr(data, blocksize='auto', thin=False)->da.core.Array:
           data,
           chunks = blocksize
         )
+  
   return darr
 
 
@@ -103,7 +112,7 @@ def parse_data(obj:dict,dry_run=True)->tuple:
     "ind" in obj["data"] and obj["data"]["ind"] else np.arange(arr.shape[0])
   col=np.asarray(obj["data"]["col"],dtype="U32") if \
     "col" in obj["data"] and obj["data"]["col"] else np.arange(arr.shape[1])
-  return arr,ind,col
+  return arr, ind, col
 
 
 def init_zarr(root_path,data_name)->zarr.Group:
@@ -127,7 +136,6 @@ def write_array(group:zarr.Group,*args)->list:
     for name,data in args:
       if isinstance(data,da.core.Array):
         raise TypeError(f'Only computed result is supported, got {type(data)}')
-      
       group.create_dataset(name=name,data=data)
       result.append((name,data.shape))
 
